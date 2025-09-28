@@ -1,0 +1,102 @@
+# ionos-vm-poc/docker-compose.yml
+services:
+  npm:
+    image: jc21/nginx-proxy-manager:latest
+    container_name: npm
+    restart: unless-stopped
+    ports:
+      - "80:80"      # HTTP
+      - "81:81"      # Nginx Proxy Manager Admin UI
+      - "443:443"    # HTTPS
+    volumes:
+      - npm_data:/data
+      - npm_letsencrypt:/etc/letsencrypt
+    networks:
+      - frontend
+
+  db:
+    image: mariadb:10.11
+    container_name: mariadb
+    restart: unless-stopped
+    environment:
+      - MARIADB_ROOT_PASSWORD=${WP_DB_ROOT_PASSWORD}
+      - MARIADB_DATABASE=${WP_DB_NAME}
+      - MARIADB_USER=${WP_DB_USER}
+      - MARIADB_PASSWORD=${WP_DB_PASSWORD}
+    volumes:
+      - mariadb_data:/var/lib/mysql
+    networks:
+      - backend
+
+  wordpress:
+    image: wordpress:6.6.1-php8.2-apache
+    container_name: wordpress
+    depends_on:
+      - db
+    restart: unless-stopped
+    environment:
+      - WORDPRESS_DB_HOST=db
+      - WORDPRESS_DB_NAME=${WP_DB_NAME}
+      - WORDPRESS_DB_USER=${WP_DB_USER}
+      - WORDPRESS_DB_PASSWORD=${WP_DB_PASSWORD}
+      # Make WP generate proper URLs behind reverse proxy and force HTTPS in admin
+      - WORDPRESS_CONFIG_EXTRA=define('WP_HOME','https://${CMS_DOMAIN}'); define('WP_SITEURL','https://${CMS_DOMAIN}'); define('FORCE_SSL_ADMIN', true);
+    volumes:
+      - wp_data:/var/www/html
+    networks:
+      - frontend
+      - backend
+    expose:
+      - "80"  # internal for NPM to proxy to
+
+  bridge-api:
+    build: ./bridge-api
+    container_name: bridge-api
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      - PORT=3000
+      - API_BASE_URL=${API_BASE_URL}
+      - WP_BASE_URL=${WP_BASE_URL}
+      - WP_USER=${WP_USER}
+      - WP_APP_PASSWORD=${WP_APP_PASSWORD}
+      - BRIDGE_API_KEY=${BRIDGE_API_KEY}
+      - OWUI_ORIGIN=https://${CHAT_DOMAIN}
+    volumes:
+      - ./tools:/app/tools           # your custom tool scripts
+    networks:
+      - frontend
+    expose:
+      - "3000"
+
+  openwebui:
+    image: ghcr.io/open-webui/open-webui:latest
+    container_name: openwebui
+    restart: unless-stopped
+    environment:
+      - API_BASE_URL=${API_BASE_URL}
+      - BRIDGE_API_KEY=${BRIDGE_API_KEY}
+      # If your Model Hub is OpenAI-compatible, set these (or configure via UI later)
+      - OPENAI_API_BASE_URL=${OPENWEBUI_API_BASE_URL}
+      - OPENAI_API_KEY=${OPENWEBUI_API_KEY}
+      # Optional: Listen on 0.0.0.0 and chosen port
+      - WEBUI_HOST=0.0.0.0
+      - WEBUI_PORT=8081
+    volumes:
+      - openwebui_data:/app/backend/data
+    networks:
+      - frontend
+    expose:
+      - "8081"
+
+volumes:
+  npm_data:
+  npm_letsencrypt:
+  mariadb_data:
+  wp_data:
+  openwebui_data:
+
+networks:
+  frontend:
+  backend:
