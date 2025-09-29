@@ -310,3 +310,34 @@ class Tools:
             return "❌ Cannot connect to the Bridge API. Check DNS/SSL/proxy."
         except Exception as e:
             return f"❌ Unexpected error: {e}"
+
+    def delete_wordpress_post(self, post_id: int) -> str:
+        """
+        Description (LLM):
+          Delete a WordPress post by ID.
+
+        Args:
+          post_id (int): WordPress post ID.
+
+        Returns:
+          str: Success message or error details.
+
+        Example:
+          tools.delete_wordpress_post(123)
+        """
+        try:
+            r = requests.delete(
+                self._safe_url(str(post_id)),
+                headers=self._headers(),
+                timeout=self.timeout,
+            )
+            data = self._handle_response(r, ok_statuses=(200,))
+            if "error" in data:
+                return f"❌ Error deleting post {post_id} ({data['error']}):\n{data.get('detail','')}"
+            return f"✅ Post {post_id} deleted successfully."
+        except requests.exceptions.Timeout:
+            return "❌ Request timed out while deleting the post."
+        except requests.exceptions.ConnectionError:
+            return "❌ Cannot connect to the Bridge API. Check DNS/SSL/proxy."
+        except Exception as e:
+            return f"❌ Unexpected error: {e}"
