@@ -34,7 +34,7 @@ app.get("/valves/user", (_req, res) => {
   res.json({
     name: "wp_api",
     version: "1.0.0",
-    features: ["list-posts", "create-post"], ["delete-post"], ["update-post"],
+    features: ["list-posts", "create-post", "delete-post", "update-post"],
   });
 });
 
@@ -135,14 +135,15 @@ app.get("/posts", async (req, res) => {
 
 // Get a post by ID (public endpoint)
 app.get("/posts/:id", 
-  param("id").isInt(),
+  param("id").isInt().toInt(), // Ensure `id` is an integer
   async (req, res) => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
       return res.status(400).json({ errors: errors.array() });
     }
+    const postId = req.params.id; // `postId` is now guaranteed to be an integer
     // WordPress REST API endpoint
-    const wp_rest_url = `${WP_BASE_URL}/wp-json/wp/v2/posts/${req.params.id}`;
+    const wp_rest_url = `${WP_BASE_URL}/wp-json/wp/v2/posts/${postId}`;
     try {
       const r = await fetch(wp_rest_url, {
         headers: wpHeaders() // if you want to retrieve protected fields
