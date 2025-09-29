@@ -157,6 +157,68 @@ app.get("/posts/:id",
   }
 );
 
+// Update a post by ID (protected with API key)
+app.patch("/posts/:id", 
+  requireApiKey,
+  param("id").isInt().toInt(), // Ensure `id` is an integer
+  body("title").optional().isString(),
+  body("content").optional().isString(),
+  body("status").optional().isString().isIn(["draft", "publish", "private"]),
+  async (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ errors: errors.array() });
+    }
+
+    const postId = req.params.id; // `postId` is now guaranteed to be an integer
+    const { title, content, status } = req.body;
+
+    // WordPress REST API endpoint
+    const wp_rest_url = `${WP_BASE_URL}/wp-json/wp/v2/posts/${postId}`;
+
+    try {
+      const r = await fetch(wp_rest_url, {
+        method: "PATCH",
+        headers: wpHeaders(),
+        body: JSON.stringify({ title, content, status })
+      });
+      const data = await r.json();
+      if (!r.ok) return res.status(r.status).json({ error: "WP error", detail: data });
+      res.json(data);
+    } catch (e) {
+      res.status(500).json({ error: "Bridge error", detail: e.message + " " + wp_rest_url });
+    }
+  }
+);
+
+// Delete a post by ID (protected with API key)
+app.delete("/posts/:id", 
+  requireApiKey,
+  param("id").isInt().toInt(), // Ensure `id` is an integer
+  async (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ errors: errors.array() });
+    }
+
+    const postId = req.params.id; // `postId` is now guaranteed to be an integer
+    // WordPress REST API endpoint
+    const wp_rest_url = `${WP_BASE_URL}/wp-json/wp/v2/posts/${postId}`;
+
+    try {
+      const r = await fetch(wp_rest_url, {
+        method: "DELETE",
+        headers: wpHeaders()
+      });
+      const data = await r.json();
+      if (!r.ok) return res.status(r.status).json({ error: "WP error", detail: data });
+      res.json({ message: "Post deleted successfully", data });
+    } catch (e) {
+      res.status(500).json({ error: "Bridge error", detail: e.message + " " + wp_rest_url });
+    }
+  }
+);
+
 const openapiSpec = {
   openapi: "3.0.0",
   info: {
@@ -329,19 +391,123 @@ const openapiSpec = {
             description: "Post not found"
           }
         }
+      },
+      patch: {
+        summary: "Update a WordPress post by ID",
+        description: "Partially update a WordPress post by its ID. Requires authentication.",
+        parameters: [
+          {
+            name: "id",
+            in: "path",
+            required: true,
+            description: "The ID of the WordPress post",
+            schema: { type: "integer" }
+          }
+        ],
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: {
+                type: "object",
+                properties: {
+                  title: { 
+                    type: "string",
+                    description: "The new title of the blog post"
+                  },
+                  content: { 
+                    type: "string",
+                    description: "The new content/body of the blog post"
+                  },
+                  status: { 
+                    type: "string",
+                    enum: ["draft", "publish", "private"],
+                    description: "The new publication status of the post"
+                  }
+                }
+              }
+            }
+          }
+        },
+        responses: {
+          "200": {
+            description: "Post updated successfully",
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: {
+                    id: { type: "integer" },
+                    title: { type: "object" },
+                    content: { type: "object" },
+                    status: { type: "string" },
+                    link: { type: "string" }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            description: "Bad request (invalid input)"
+          },
+          "401": {
+            description: "Unauthorized (invalid or missing API key)"
+          },
+          "404": {
+            description: "Post not found"
+          }
+        }
+      },
+      delete: {
+        summary: "Delete a WordPress post by ID",
+        description: "Delete a WordPress post by its ID. Requires authentication.",
+        parameters: [
+          {
+            name: "id",
+            in: "path",
+            required: true,
+            description: "The ID of the WordPress post",
+            schema: { type: "integer" }
+          }
+        ],
+        responses: {
+          "200": {
+            description: "Post deleted successfully",
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: {
+                    message: { type: "string" },
+                    data: { type: "object" }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            description: "Bad request (invalid input)"
+          },
+          "401": {
+            description: "Unauthorized (invalid or missing API key)"
+          },
+          "404": {
+            description: "Post not found"
+          }
+        }
       }
     }
   }
 };
 
-// Handle undefined routes
-app.use((req, res) => {
-  res.status(404).json({ error: "Not Found" });
-});
-
 // Protect OpenAPI spec if needed
 app.get("/openapi.json", requireApiKey, (req, res) => {
   res.json(openapiSpec);
+});
+
+// Handle undefined routes
+app.use((req, res) => {
+  res.status(404).json({ error: "Not Found" });
 });
 
 app.listen(PORT, () => {
