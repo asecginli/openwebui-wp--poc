@@ -3,6 +3,8 @@
 import express from "express";
 import fetch from "node-fetch";
 import cors from "cors";
+import rateLimit from "express-rate-limit";
+import { body, param, validationResult } from "express-validator";
 
 const {
   PORT = 3000,
@@ -32,15 +34,15 @@ app.get("/valves/user", (_req, res) => {
   res.json({
     name: "wp_api",
     version: "1.0.0",
-    features: ["list-posts", "create-post"],
+    features: ["list-posts", "create-post"], ["delete-post"], ["update-post"],
   });
 });
 
 // CORS: allow your OpenWebUI origin from environment variable
 app.use(cors({
   // Use the env variable, with a fallback for safety
-  origin: OWUI_ORIGIN || "https://chat.agnsai.ddns.net",
-  methods: ["GET", "POST", "OPTIONS"],
+  origin: OWUI_ORIGIN ,
+  methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
   allowedHeaders: ["Content-Type", "Authorization", "X-API-Key"],
   credentials: false
 }));
@@ -64,29 +66,47 @@ function wpHeaders() {
   };
 }
 
-// Create a post (protected with API key)
-app.post("/posts", requireApiKey, async (req, res) => {
-  // WordPress REST API endpoint
-  const wp_rest_url = `${WP_BASE_URL}/wp-json/wp/v2/posts`;
-
-  try {
-    const { title, content, status = "publish" } = req.body;
-    if (!title || !content) {
-      return res.status(400).json({ error: "Missing title or content" });
-    }
-    
-    const r = await fetch(wp_rest_url, {
-      method: "POST",
-      headers: wpHeaders(),
-      body: JSON.stringify({ title, content, status })
-    });
-    const data = await r.json();
-    if (!r.ok) return res.status(r.status).json({ error: `WP error |Create a post (protected with API key)|${WP_USER}:${WP_APP_PASSWORD}|`, detail: data });
-    res.json(data);
-  } catch (e) {
-    res.status(500).json({ error: "Bridge error", detail: e.message + " " + wp_rest_url });
-  }
+// Rate limiting
+const limiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 100, // Limit each IP to 100 requests per windowMs
+  message: { error: "Too many requests, please try again later." }
 });
+
+app.use(limiter);
+
+// Create a post (protected with API key)
+app.post("/posts", 
+  requireApiKey,
+  body("title").isString().notEmpty(),
+  body("content").isString().notEmpty(),
+  async (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ errors: errors.array() });
+    }
+    // WordPress REST API endpoint
+    const wp_rest_url = `${WP_BASE_URL}/wp-json/wp/v2/posts`;
+
+    try {
+      const { title, content, status = "publish" } = req.body;
+      if (!title || !content) {
+        return res.status(400).json({ error: "Missing title or content" });
+      }
+      
+      const r = await fetch(wp_rest_url, {
+        method: "POST",
+        headers: wpHeaders(),
+        body: JSON.stringify({ title, content, status })
+      });
+      const data = await r.json();
+      if (!r.ok) return res.status(r.status).json({ error: "WP error", detail: data });
+      res.json(data);
+    } catch (e) {
+      res.status(500).json({ error: "Bridge error", detail: e.message + " " + wp_rest_url });
+    }
+  }
+);
 
 // Get recent posts (public endpoint)
 app.get("/posts", async (req, res) => {
@@ -112,6 +132,29 @@ app.get("/posts", async (req, res) => {
     res.status(500).json({ error: "Bridge error", detail: e.message + " " + wp_rest_url });
   }
 });
+
+// Get a post by ID (public endpoint)
+app.get("/posts/:id", 
+  param("id").isInt(),
+  async (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+      return res.status(400).json({ errors: errors.array() });
+    }
+    // WordPress REST API endpoint
+    const wp_rest_url = `${WP_BASE_URL}/wp-json/wp/v2/posts/${req.params.id}`;
+    try {
+      const r = await fetch(wp_rest_url, {
+        headers: wpHeaders() // if you want to retrieve protected fields
+      });
+      const data = await r.json();
+      if (!r.ok) return res.status(r.status).json({ error: "WP error", detail: data });
+      res.json(data);
+    } catch (e) {
+      res.status(500).json({ error: "Bridge error", detail: e.message + " " + wp_rest_url });
+    }
+  }
+);
 
 const openapiSpec = {
   openapi: "3.0.0",
@@ -248,11 +291,55 @@ const openapiSpec = {
           }
         }
       }
+    },
+    "/posts/{id}": {
+      get: {
+        summary: "Get a WordPress post by ID",
+        description: "Retrieve a single WordPress post by its ID.",
+        parameters: [
+          {
+            name: "id",
+            in: "path",
+            required: true,
+            description: "The ID of the WordPress post",
+            schema: { type: "integer" }
+          }
+        ],
+        responses: {
+          "200": {
+            description: "Successful response with the post data",
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: {
+                    id: { type: "integer" },
+                    title: { type: "object" },
+                    content: { type: "object" },
+                    excerpt: { type: "object" },
+                    date: { type: "string" },
+                    link: { type: "string" }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            description: "Post not found"
+          }
+        }
+      }
     }
   }
 };
 
-app.get("/openapi.json", (req, res) => {
+// Handle undefined routes
+app.use((req, res) => {
+  res.status(404).json({ error: "Not Found" });
+});
+
+// Protect OpenAPI spec if needed
+app.get("/openapi.json", requireApiKey, (req, res) => {
   res.json(openapiSpec);
 });
 
