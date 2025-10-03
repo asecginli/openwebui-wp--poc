@@ -1,4 +1,4 @@
-// ionos-vm-poc/bridge-api/server.js
+// openwebui-wp-poc/bridge-api/server.js
 
 import express from "express";
 import fetch from "node-fetch";

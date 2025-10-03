@@ -1,4 +1,4 @@
-# ionos-vm-poc/docker-compose.yml
+# openwebui-wp-poc//docker-compose.yml
 services:
   npm:
     image: jc21/nginx-proxy-manager:latest

@@ -1,7 +1,7 @@
 import axios from 'axios';
 
 const wp = axios.create({
-  baseURL: process.env.WP_BASE_URL || 'https://cms.example.com/wp-json/wp/v2',
+  baseURL: process.env.WP_BASE_URL,
   auth: {                    // axios will send Basic <base64(user:pass)>
     username: process.env.WP_BASIC_USER,
     password: process.env.WP_BASIC_PASS

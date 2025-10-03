@@ -1,5 +1,5 @@
-# ionos-vm-poc/bridge-api/Dockerfile
-FROM node:24-alpine
+# openwebui-wp-poc//bridge-api/Dockerfile
+FROM node:24-alpine3.19
 WORKDIR /app
 COPY package*.json ./
 RUN npm install --omit=dev --no-audit --no-fund
