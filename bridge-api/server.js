@@ -38,20 +38,28 @@ app.get("/valves/user", (_req, res) => {
   });
 });
 
-// CORS: allow your OpenWebUI origin from environment variable
+// Modify CORS handling to be more secure and informative
 app.use(cors({
-  // Use the env variable, with a fallback for safety
-  origin: OWUI_ORIGIN ,
+  origin: (origin, callback) => {
+    if (!origin || origin === OWUI_ORIGIN) {
+      callback(null, true);
+    } else {
+      const corsError = new Error('CORS policy violation');
+      corsError.status = 403;
+      corsError.details = `Origin ${origin} is not allowed`;
+      callback(corsError);
+    }
+  },
   methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
   allowedHeaders: ["Content-Type", "Authorization", "X-API-Key"],
-  credentials: false
+  credentials: true
 }));
+
 
 // Middleware to check API key for protected endpoints
 function requireApiKey(req, res, next) {
   const apiKey = req.headers['authorization']?.replace('Bearer ', '') || 
                  req.headers['x-api-key'];
-  
   if (!apiKey || apiKey !== BRIDGE_API_KEY) {
     return res.status(401).json({ error: `Unauthorized: Invalid API key` });
   }
@@ -62,7 +70,8 @@ function wpHeaders() {
   const token = Buffer.from(`${WP_USER}:${WP_APP_PASSWORD}`).toString("base64");
   return {
     "Authorization": `Basic ${token}`,
-    "Content-Type": "application/json"
+    "Content-Type": "application/json",
+    "X-Bridge-Auth": BRIDGE_API_KEY
   };
 }
 
@@ -508,6 +517,88 @@ app.get("/openapi.json", requireApiKey, (req, res) => {
 // Handle undefined routes
 app.use((req, res) => {
   res.status(404).json({ error: "Not Found" });
+});
+
+// Custom error logger
+const errorLogger = (err, req) => {
+  console.error({
+    timestamp: new Date().toISOString(),
+    error: {
+      message: err.message,
+      stack: err.stack,
+      status: err.status
+    },
+    request: {
+      method: req.method,
+      path: req.path,
+      query: req.query,
+      ip: req.ip
+    }
+  });
+};
+
+// Global error handler
+app.use((err, req, res, next) => {
+  errorLogger(err, req);
+
+  // Default to 500 if status not set
+  const status = err.status || 500;
+  
+  // Sanitize error message in production
+  const isProduction = process.env.NODE_ENV === 'production';
+  const message = isProduction ? 
+    'An unexpected error occurred' : 
+    err.message || 'Internal server error';
+
+  // Send JSON response for API requests
+  if (req.accepts('json')) {
+    return res.status(status).json({
+      error: {
+        message,
+        status,
+        // Only include details in development
+        ...((!isProduction && err.details) && {details: err.details})
+      }
+    });
+  }
+
+  // Send HTML response for browser requests
+  res.status(status).send(`
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+      <meta charset="utf-8">
+      <title>Error ${status}</title>
+      <style>
+        body {
+          font-family: system-ui, -apple-system, sans-serif;
+          padding: 2rem;
+          max-width: 800px;
+          margin: 0 auto;
+          line-height: 1.5;
+        }
+        .error {
+          background: #fff3f3;
+          border: 1px solid #ffcdd2;
+          border-radius: 4px;
+          padding: 1rem;
+        }
+        .error-code {
+          color: #d32f2f;
+          font-size: 1.2rem;
+          font-weight: bold;
+        }
+      </style>
+    </head>
+    <body>
+      <div class="error">
+        <div class="error-code">Error ${status}</div>
+        <p>${message}</p>
+        ${!isProduction && err.details ? `<pre>${err.details}</pre>` : ''}
+      </div>
+    </body>
+    </html>
+  `);
 });
 
 app.listen(PORT, () => {
