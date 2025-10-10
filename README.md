@@ -60,7 +60,7 @@ A Docker Compose setup integrating OpenWebUI with WordPress via a custom Bridge 
    ```
 
 2. Create application password:
-   - Go to Users → Profile → Application Passwords
+   - Go to Users > Profile > Application Passwords
    - Name: "Bridge API"
    - Copy generated password
 
@@ -72,6 +72,57 @@ A Docker Compose setup integrating OpenWebUI with WordPress via a custom Bridge 
    # Restart stack
    docker compose up -d
    ```
+
+### 3. Agent Builder (OpenAI) Setup
+
+> Required for Telegram/WhatsApp messaging integrations.
+
+1. Create an agent (or choose a model) in the OpenAI Agent Builder (https://platform.openai.com/agents) or via the Responses API.
+2. Note the `agent_id` (or model name) and generate an API key with access to that agent.
+3. Update `.env`:
+   ```bash
+   AGENT_API_KEY=sk-...
+   AGENT_ID=agent-...
+   # Optional fallbacks:
+   # AGENT_MODEL=gpt-4.1-mini
+   # AGENT_API_BASE_URL=https://api.openai.com/v1
+   ```
+4. Restart the stack so the Bridge API picks up the new credentials.
+
+### 4. Messaging Integrations (optional)
+
+Both connectors expect the agent configuration above. Populate the relevant environment variables and restart the stack to enable each channel.
+
+#### Telegram Bot
+
+1. Create a bot with @BotFather (https://t.me/BotFather) and copy the token.
+2. Update `.env`:
+   ```bash
+   TELEGRAM_BOT_TOKEN=1234567890:token-from-botfather
+   TELEGRAM_WEBHOOK_SECRET=choose-a-shared-secret
+   TELEGRAM_ALLOWED_CHAT_IDS=123456789,987654321  # optional allow list
+   ```
+3. Restart the stack to load the new variables.
+4. Point Telegram at the Bridge webhook:
+   ```bash
+   curl -X POST "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/setWebhook" \
+     --data-urlencode "url=https://api.YOURDOMAIN/integrations/telegram/webhook?secret=$TELEGRAM_WEBHOOK_SECRET"
+   ```
+5. Send the bot a message. It forwards the text to the configured agent and replies with the agent's response.
+
+#### WhatsApp Cloud API
+
+1. In the Meta Developer dashboard, enable the WhatsApp product, add a phone number, and generate a permanent access token.
+2. Update `.env`:
+   ```bash
+   WHATSAPP_VERIFY_TOKEN=the-value-you-used-in-meta
+   WHATSAPP_ACCESS_TOKEN=EAAG...
+   WHATSAPP_PHONE_NUMBER_ID=123456789012345
+   WHATSAPP_API_VERSION=v20.0
+   ```
+3. Restart the stack.
+4. In Meta, configure the webhook callback URL to `https://api.YOURDOMAIN/integrations/whatsapp/webhook` and supply the same verify token above.
+5. Subscribe the webhook to `messages` events. Incoming user texts are relayed to the agent and the response is sent back via WhatsApp.
 
 ## Testing
 
@@ -112,3 +163,5 @@ Client → Nginx Proxy Manager → OpenWebUI → Bridge API → WordPress → Ma
 - Verify SSL certificates in Nginx Proxy Manager
 - Ensure all environment variables are set correctly
 - Check WordPress application password is valid
+
+

@@ -13,11 +13,33 @@ const {
   WP_USER,
   WP_APP_PASSWORD,
   OWUI_ORIGIN,
-  BRIDGE_API_KEY
+  BRIDGE_API_KEY,
+  AGENT_API_BASE_URL,
+  AGENT_API_KEY,
+  AGENT_ID,
+  AGENT_MODEL,
+  TELEGRAM_BOT_TOKEN,
+  TELEGRAM_WEBHOOK_SECRET,
+  TELEGRAM_ALLOWED_CHAT_IDS,
+  WHATSAPP_VERIFY_TOKEN,
+  WHATSAPP_ACCESS_TOKEN,
+  WHATSAPP_PHONE_NUMBER_ID,
+  WHATSAPP_API_VERSION = "v20.0"
 } = process.env;
 
 const app = express();
 app.use(express.json());
+
+const trimmedAgentBaseUrl = AGENT_API_BASE_URL?.replace(/\/+$/, "");
+const agentSessions = new Map(); // In-memory tracking of conversation threads per integration session
+const telegramAllowedChatIds = (TELEGRAM_ALLOWED_CHAT_IDS || "")
+  .split(",")
+  .map((id) => id.trim())
+  .filter(Boolean);
+const isAgentConfigured = () =>
+  Boolean(AGENT_API_KEY && (AGENT_ID || AGENT_MODEL));
+const TELEGRAM_MAX_MESSAGE_LENGTH = 3900; // Keep under Telegram's 4096 limit to avoid truncation
+const WHATSAPP_MAX_MESSAGE_LENGTH = 3900;
 
 
 app.use((req, _res, next) => {
@@ -73,6 +95,194 @@ function wpHeaders() {
     "Content-Type": "application/json",
     "X-Bridge-Auth": BRIDGE_API_KEY
   };
+}
+
+const agentBaseUrl = () => (trimmedAgentBaseUrl || "https://api.openai.com/v1");
+
+function chunkMessage(text, maxLength) {
+  const chunks = [];
+  let remaining = (text || "").trim();
+  if (!remaining.length) {
+    return [""];
+  }
+
+  while (remaining.length > maxLength) {
+    let chunk = remaining.slice(0, maxLength);
+    const lastBreak = chunk.lastIndexOf("\n");
+    if (lastBreak > maxLength / 2) {
+      chunk = chunk.slice(0, lastBreak);
+    }
+    chunks.push(chunk.trim());
+    remaining = remaining.slice(chunk.length).trimStart();
+  }
+
+  if (remaining.length) {
+    chunks.push(remaining);
+  }
+
+  return chunks;
+}
+
+async function callAgent(prompt, { sessionId, metadata } = {}) {
+  if (!isAgentConfigured()) {
+    throw new Error("Agent integration is not configured");
+  }
+
+  const payload = {
+    input: [
+      {
+        role: "user",
+        content: [
+          { type: "input_text", text: prompt }
+        ]
+      }
+    ]
+  };
+
+  if (AGENT_ID) {
+    payload.agent_id = AGENT_ID;
+  } else if (AGENT_MODEL) {
+    payload.model = AGENT_MODEL;
+  }
+
+  const conversationId = sessionId ? agentSessions.get(sessionId) : undefined;
+  if (conversationId) {
+    payload.conversation = { id: conversationId };
+  }
+
+  if (metadata && Object.keys(metadata).length) {
+    payload.metadata = metadata;
+  }
+
+  const response = await fetch(`${agentBaseUrl()}/responses`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${AGENT_API_KEY}`,
+      "OpenAI-Beta": "assistants=v2"
+    },
+    body: JSON.stringify(payload)
+  });
+
+  const data = await response.json();
+  if (!response.ok) {
+    const detail = data?.error?.message || response.statusText;
+    throw new Error(`Agent request failed: ${detail}`);
+  }
+
+  const newConversationId = data?.conversation?.id;
+  if (sessionId && newConversationId) {
+    agentSessions.set(sessionId, newConversationId);
+    if (agentSessions.size > 1000) {
+      const firstKey = agentSessions.keys().next().value;
+      if (firstKey) {
+        agentSessions.delete(firstKey);
+      }
+    }
+  }
+
+  const outputSegments = Array.isArray(data?.output) ? data.output : [];
+  const text = outputSegments
+    .flatMap((segment) =>
+      Array.isArray(segment?.content) ? segment.content : []
+    )
+    .filter(
+      (content) =>
+        content?.type === "output_text" && typeof content.text === "string"
+    )
+    .map((content) => content.text)
+    .join("\n")
+    || data?.output_text
+    || data?.response_text
+    || "";
+
+  return { text: text.trim(), raw: data };
+}
+
+async function telegramSendMessage(chatId, text, options = {}) {
+  if (!TELEGRAM_BOT_TOKEN) {
+    throw new Error("Telegram bot token is not configured");
+  }
+
+  const url = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`;
+  const payload = {
+    chat_id: chatId,
+    text,
+    disable_web_page_preview: true
+  };
+
+  if (options.replyToMessageId) {
+    payload.reply_to_message_id = options.replyToMessageId;
+  }
+
+  const response = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload)
+  });
+  const data = await response.json();
+
+  if (!response.ok || data?.ok === false) {
+    const description = data?.description || response.statusText;
+    throw new Error(`Telegram send failed: ${description}`);
+  }
+
+  return data;
+}
+
+async function telegramSendLongMessage(chatId, text, options = {}) {
+  const chunks = chunkMessage(text, TELEGRAM_MAX_MESSAGE_LENGTH);
+  let isFirstChunk = true;
+
+  for (const chunk of chunks) {
+    if (!chunk) continue;
+    const payload = isFirstChunk ? options : {};
+    await telegramSendMessage(chatId, chunk, payload);
+    isFirstChunk = false;
+  }
+}
+
+const whatsappEndpoint = () => {
+  if (!WHATSAPP_PHONE_NUMBER_ID) {
+    throw new Error("WhatsApp phone number ID is not configured");
+  }
+  return `https://graph.facebook.com/${WHATSAPP_API_VERSION}/${WHATSAPP_PHONE_NUMBER_ID}/messages`;
+};
+
+async function whatsappSendMessage(to, text) {
+  if (!WHATSAPP_ACCESS_TOKEN) {
+    throw new Error("WhatsApp access token is not configured");
+  }
+
+  const response = await fetch(whatsappEndpoint(), {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${WHATSAPP_ACCESS_TOKEN}`
+    },
+    body: JSON.stringify({
+      messaging_product: "whatsapp",
+      to,
+      type: "text",
+      text: { body: text }
+    })
+  });
+
+  const data = await response.json();
+  if (!response.ok) {
+    const detail = data?.error?.message || response.statusText;
+    throw new Error(`WhatsApp send failed: ${detail}`);
+  }
+
+  return data;
+}
+
+async function whatsappSendLongMessage(to, text) {
+  const chunks = chunkMessage(text, WHATSAPP_MAX_MESSAGE_LENGTH);
+  for (const chunk of chunks) {
+    if (!chunk) continue;
+    await whatsappSendMessage(to, chunk);
+  }
 }
 
 // Rate limiting
@@ -227,6 +437,170 @@ app.delete("/posts/:id",
     }
   }
 );
+
+// Telegram webhook endpoint to bridge chats -> agent responses
+app.post("/integrations/telegram/webhook", async (req, res) => {
+  if (!TELEGRAM_BOT_TOKEN) {
+    return res.status(501).json({ error: "Telegram integration is not configured" });
+  }
+
+  try {
+    if (TELEGRAM_WEBHOOK_SECRET) {
+      const providedSecret =
+        req.query.secret ||
+        req.headers["x-telegram-secret-token"];
+      if (providedSecret !== TELEGRAM_WEBHOOK_SECRET) {
+        return res.status(403).json({ error: "Invalid webhook secret" });
+      }
+    }
+
+    const update = req.body || {};
+    const message =
+      update.message ||
+      update.edited_message ||
+      update.channel_post ||
+      update.edited_channel_post;
+
+    if (!message?.text) {
+      return res.json({ ok: true });
+    }
+
+    const chatIdRaw = message.chat?.id;
+    const chatId = chatIdRaw != null ? String(chatIdRaw) : null;
+    if (!chatId) {
+      return res.json({ ok: true });
+    }
+
+    if (telegramAllowedChatIds.length && !telegramAllowedChatIds.includes(chatId)) {
+      console.warn(`Ignoring Telegram chat ${chatId} (not allow-listed)`);
+      return res.json({ ok: true });
+    }
+
+    const prompt = message.text.trim();
+    if (!prompt) {
+      return res.json({ ok: true });
+    }
+
+    if (!isAgentConfigured()) {
+      await telegramSendLongMessage(
+        chatId,
+        "Agent integration is not configured yet. Please contact the administrator.",
+        { replyToMessageId: message.message_id }
+      );
+      return res.json({ ok: true });
+    }
+
+    try {
+      const agentResponse = await callAgent(prompt, {
+        sessionId: `telegram:${chatId}`,
+        metadata: {
+          platform: "telegram",
+          chat_id: chatId,
+          username: message.from?.username,
+          first_name: message.from?.first_name,
+          last_name: message.from?.last_name
+        }
+      });
+
+      const replyText = agentResponse.text || "The agent did not return any content.";
+      await telegramSendLongMessage(
+        chatId,
+        replyText,
+        { replyToMessageId: message.message_id }
+      );
+    } catch (agentError) {
+      console.error("Telegram agent processing error", agentError);
+      await telegramSendLongMessage(
+        chatId,
+        "There was a problem contacting the agent. Please try again later.",
+        { replyToMessageId: message.message_id }
+      );
+    }
+
+    res.json({ ok: true });
+  } catch (err) {
+    console.error("Telegram webhook error", err);
+    res.status(200).json({ ok: true });
+  }
+});
+
+// WhatsApp webhook verification (Meta requirement)
+app.get("/integrations/whatsapp/webhook", (req, res) => {
+  if (!WHATSAPP_VERIFY_TOKEN) {
+    return res.status(501).send("WhatsApp integration is not configured");
+  }
+
+  const mode = req.query["hub.mode"];
+  const token = req.query["hub.verify_token"];
+  const challenge = req.query["hub.challenge"];
+
+  if (mode === "subscribe" && token === WHATSAPP_VERIFY_TOKEN) {
+    return res.status(200).send(challenge);
+  }
+
+  res.status(403).send("Forbidden");
+});
+
+// WhatsApp webhook receiver (Meta Cloud API)
+app.post("/integrations/whatsapp/webhook", async (req, res) => {
+  if (!WHATSAPP_ACCESS_TOKEN || !WHATSAPP_PHONE_NUMBER_ID) {
+    return res.status(501).json({ error: "WhatsApp integration is not configured" });
+  }
+
+  const entries = Array.isArray(req.body?.entry) ? req.body.entry : [];
+
+  for (const entry of entries) {
+    const changes = Array.isArray(entry?.changes) ? entry.changes : [];
+    for (const change of changes) {
+      const value = change?.value;
+      const messages = Array.isArray(value?.messages) ? value.messages : [];
+      const contacts = Array.isArray(value?.contacts) ? value.contacts : [];
+      const contact = contacts[0];
+
+      for (const message of messages) {
+        if (message.type !== "text" || !message.text?.body) {
+          continue;
+        }
+
+        const from = message.from;
+        const prompt = message.text.body.trim();
+        if (!from || !prompt) {
+          continue;
+        }
+
+        if (!isAgentConfigured()) {
+          await whatsappSendLongMessage(
+            from,
+            "Agent integration is not configured yet. Please contact the administrator."
+          );
+          continue;
+        }
+
+        try {
+          const agentResponse = await callAgent(prompt, {
+            sessionId: `whatsapp:${from}`,
+            metadata: {
+              platform: "whatsapp",
+              phone: from,
+              profile_name: contact?.profile?.name
+            }
+          });
+
+          const replyText = agentResponse.text || "The agent did not return any content.";
+          await whatsappSendLongMessage(from, replyText);
+        } catch (agentError) {
+          console.error("WhatsApp agent processing error", agentError);
+          await whatsappSendLongMessage(
+            from,
+            "There was a problem contacting the agent. Please try again later."
+          );
+        }
+      }
+    }
+  }
+
+  res.sendStatus(200);
+});
 
 const openapiSpec = {
   openapi: "3.0.0",
@@ -502,6 +876,94 @@ const openapiSpec = {
           },
           "404": {
             description: "Post not found"
+          }
+        }
+      }
+    },
+    "/integrations/telegram/webhook": {
+      post: {
+        summary: "Telegram webhook for agent commands",
+        description: "Receives Telegram bot updates, forwards user messages to the configured agent, and replies with the agent response.",
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: {
+                type: "object",
+                description: "Telegram update payload"
+              }
+            }
+          }
+        },
+        responses: {
+          "200": {
+            description: "Webhook processed successfully"
+          },
+          "403": {
+            description: "Invalid webhook secret"
+          },
+          "501": {
+            description: "Integration not configured"
+          }
+        }
+      }
+    },
+    "/integrations/whatsapp/webhook": {
+      get: {
+        summary: "WhatsApp webhook verification",
+        description: "Endpoint used by Meta to verify the webhook during setup.",
+        parameters: [
+          {
+            name: "hub.mode",
+            in: "query",
+            required: false,
+            schema: { type: "string" }
+          },
+          {
+            name: "hub.verify_token",
+            in: "query",
+            required: false,
+            schema: { type: "string" }
+          },
+          {
+            name: "hub.challenge",
+            in: "query",
+            required: false,
+            schema: { type: "string" }
+          }
+        ],
+        responses: {
+          "200": {
+            description: "Verification successful"
+          },
+          "403": {
+            description: "Verification failed"
+          },
+          "501": {
+            description: "Integration not configured"
+          }
+        }
+      },
+      post: {
+        summary: "WhatsApp webhook for agent commands",
+        description: "Receives WhatsApp Cloud API messages, forwards user text to the configured agent, and replies with the agent response.",
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: {
+                type: "object",
+                description: "WhatsApp webhook payload"
+              }
+            }
+          }
+        },
+        responses: {
+          "200": {
+            description: "Webhook processed successfully"
+          },
+          "501": {
+            description: "Integration not configured"
           }
         }
       }
