@@ -60,6 +60,11 @@ app.get("/valves/user", (_req, res) => {
   });
 });
 
+// Lightweight health probe for uptime monitors
+app.get("/ping", (_req, res) => {
+  res.json({ status: "ok" });
+});
+
 // Modify CORS handling to be more secure and informative
 app.use(cors({
   origin: (origin, callback) => {
@@ -95,6 +100,39 @@ function wpHeaders() {
     "Content-Type": "application/json",
     "X-Bridge-Auth": BRIDGE_API_KEY
   };
+}
+
+const wpPostsBaseUrl = () => {
+  if (!WP_BASE_URL) {
+    const error = new Error("WP_BASE_URL is not configured");
+    error.status = 500;
+    throw error;
+  }
+  return `${WP_BASE_URL}/wp-json/wp/v2/posts`;
+};
+
+async function wpCreatePost({ title, content, status = "publish" }) {
+  if (!title || !content) {
+    const error = new Error("Missing title or content");
+    error.status = 400;
+    throw error;
+  }
+
+  const response = await fetch(wpPostsBaseUrl(), {
+    method: "POST",
+    headers: wpHeaders(),
+    body: JSON.stringify({ title, content, status })
+  });
+
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const error = new Error(data?.message || response.statusText || "Failed to create WordPress post");
+    error.status = response.status;
+    error.detail = data;
+    throw error;
+  }
+
+  return data;
 }
 
 const agentBaseUrl = () => (trimmedAgentBaseUrl || "https://api.openai.com/v1");
@@ -285,6 +323,84 @@ async function whatsappSendLongMessage(to, text) {
   }
 }
 
+const normalizeQuotes = (text = "") =>
+  text
+    .replace(/[\u201C\u201D\u201E\u201F\u2033\u2036]/g, '"')
+    .replace(/[\u2018\u2019\u201A\u201B\u2032\u2035]/g, "'");
+
+function parseTelegramInstruction(rawText) {
+  if (!rawText) return null;
+  const normalized = normalizeQuotes(rawText).trim();
+  const lower = normalized.toLowerCase();
+
+  if (!lower.includes("wordpress post")) {
+    return null;
+  }
+
+  // Currently focused on create workflow.
+  const isCreate =
+    lower.includes("create a wordpress post") ||
+    lower.includes("create wordpress post") ||
+    lower.includes("create new wordpress post");
+  if (!isCreate) {
+    return null;
+  }
+
+  const titleMatch = normalized.match(
+    /(?:titled|title|called|named)\s*["']([^"']+)["']/
+  );
+  const contentMatch = normalized.match(
+    /(?:content|body|text)\s*["']([^"']+)["']/
+  );
+
+  if (!titleMatch || !contentMatch) {
+    return null;
+  }
+
+  const statusMatch = lower.match(/\b(draft|publish|published|private)\b/);
+  let status = "publish";
+  if (statusMatch) {
+    const statusToken = statusMatch[1];
+    if (statusToken === "draft") status = "draft";
+    else if (statusToken === "private") status = "private";
+  }
+
+  const title = titleMatch[1].trim();
+  const content = contentMatch[1].trim();
+
+  if (!title || !content) {
+    return null;
+  }
+
+  return {
+    action: "create_post",
+    summary: `Create WordPress post "${title}"`,
+    args: { title, content, status }
+  };
+}
+
+async function executeInstruction(instruction) {
+  switch (instruction.action) {
+    case "create_post": {
+      const data = await wpCreatePost(instruction.args);
+      const renderedTitle =
+        data?.title?.rendered ||
+        (typeof data?.title === "string" ? data.title : instruction.args.title);
+      const link = data?.link;
+      const status = data?.status || instruction.args.status;
+      const id = data?.id;
+
+      let result = `Success: WordPress post created.\nTitle: ${renderedTitle}`;
+      if (id != null) result += `\nID: ${id}`;
+      if (status) result += `\nStatus: ${status}`;
+      if (link) result += `\nLink: ${link}`;
+      return result;
+    }
+    default:
+      throw new Error(`Unsupported instruction: ${instruction.action}`);
+  }
+}
+
 // Rate limiting
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
@@ -304,25 +420,12 @@ app.post("/posts",
     if (!errors.isEmpty()) {
       return res.status(400).json({ errors: errors.array() });
     }
-    // WordPress REST API endpoint
-    const wp_rest_url = `${WP_BASE_URL}/wp-json/wp/v2/posts`;
-
     try {
       const { title, content, status = "publish" } = req.body;
-      if (!title || !content) {
-        return res.status(400).json({ error: "Missing title or content" });
-      }
-      
-      const r = await fetch(wp_rest_url, {
-        method: "POST",
-        headers: wpHeaders(),
-        body: JSON.stringify({ title, content, status })
-      });
-      const data = await r.json();
-      if (!r.ok) return res.status(r.status).json({ error: "WP error", detail: data });
+      const data = await wpCreatePost({ title, content, status });
       res.json(data);
     } catch (e) {
-      res.status(500).json({ error: "Bridge error", detail: e.message + " " + wp_rest_url });
+      res.status(e.status || 500).json({ error: "Bridge error", detail: e.message, extra: e.detail });
     }
   }
 );
@@ -439,7 +542,7 @@ app.delete("/posts/:id",
 );
 
 // Telegram webhook endpoint to bridge chats -> agent responses
-app.post("/integrations/telegram/webhook", async (req, res) => {
+app.post("/telegram/webhook", async (req, res) => {
   if (!TELEGRAM_BOT_TOKEN) {
     return res.status(501).json({ error: "Telegram integration is not configured" });
   }
@@ -478,6 +581,29 @@ app.post("/integrations/telegram/webhook", async (req, res) => {
 
     const prompt = message.text.trim();
     if (!prompt) {
+      return res.json({ ok: true });
+    }
+
+    const instruction = parseTelegramInstruction(prompt);
+    if (instruction) {
+      try {
+        const executionReply = await executeInstruction(instruction);
+        await telegramSendLongMessage(
+          chatId,
+          executionReply,
+          { replyToMessageId: message.message_id }
+        );
+      } catch (instructionError) {
+        console.error("Telegram instruction execution error", instructionError);
+        const failureMessage =
+          "Warning: I could not complete that WordPress task: " +
+          (instructionError?.message || "Unknown error.");
+        await telegramSendLongMessage(
+          chatId,
+          failureMessage,
+          { replyToMessageId: message.message_id }
+        );
+      }
       return res.json({ ok: true });
     }
 
@@ -525,7 +651,7 @@ app.post("/integrations/telegram/webhook", async (req, res) => {
 });
 
 // WhatsApp webhook verification (Meta requirement)
-app.get("/integrations/whatsapp/webhook", (req, res) => {
+app.get("/whatsapp/webhook", (req, res) => {
   if (!WHATSAPP_VERIFY_TOKEN) {
     return res.status(501).send("WhatsApp integration is not configured");
   }
@@ -542,7 +668,7 @@ app.get("/integrations/whatsapp/webhook", (req, res) => {
 });
 
 // WhatsApp webhook receiver (Meta Cloud API)
-app.post("/integrations/whatsapp/webhook", async (req, res) => {
+app.post("/whatsapp/webhook", async (req, res) => {
   if (!WHATSAPP_ACCESS_TOKEN || !WHATSAPP_PHONE_NUMBER_ID) {
     return res.status(501).json({ error: "WhatsApp integration is not configured" });
   }
@@ -629,6 +755,27 @@ const openapiSpec = {
     }
   },
   paths: {
+    "/ping": {
+      get: {
+        summary: "API heartbeat",
+        description: "Simple health probe that returns a JSON payload when the service is up.",
+        responses: {
+          "200": {
+            description: "Service is reachable",
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: {
+                    status: { type: "string", example: "ok" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/posts": {
       get: {
         summary: "List WordPress posts",
@@ -880,7 +1027,7 @@ const openapiSpec = {
         }
       }
     },
-    "/integrations/telegram/webhook": {
+    "/telegram/webhook": {
       post: {
         summary: "Telegram webhook for agent commands",
         description: "Receives Telegram bot updates, forwards user messages to the configured agent, and replies with the agent response.",
@@ -908,7 +1055,7 @@ const openapiSpec = {
         }
       }
     },
-    "/integrations/whatsapp/webhook": {
+    "/whatsapp/webhook": {
       get: {
         summary: "WhatsApp webhook verification",
         description: "Endpoint used by Meta to verify the webhook during setup.",
