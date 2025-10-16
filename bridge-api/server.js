@@ -5,6 +5,7 @@ import fetch from "node-fetch";
 import cors from "cors";
 import rateLimit from "express-rate-limit";
 import { body, param, validationResult } from "express-validator";
+import { startTelegramMcpServer } from "./telegram_mcp_server.js";
 
 const {
   PORT = 3000,
@@ -21,6 +22,9 @@ const {
   TELEGRAM_BOT_TOKEN,
   TELEGRAM_WEBHOOK_SECRET,
   TELEGRAM_ALLOWED_CHAT_IDS,
+  TELEGRAM_MCP_ENABLED,
+  TELEGRAM_MCP_PORT,
+  TELEGRAM_MCP_POLL_INTERVAL_MS,
   WHATSAPP_VERIFY_TOKEN,
   WHATSAPP_ACCESS_TOKEN,
   WHATSAPP_PHONE_NUMBER_ID,
@@ -288,6 +292,30 @@ async function telegramSendLongMessage(chatId, text, options = {}) {
     await telegramSendMessage(chatId, chunk, payload);
     isFirstChunk = false;
   }
+}
+
+let telegramMcpServerHandle = null;
+if (TELEGRAM_MCP_ENABLED === "true") {
+  telegramMcpServerHandle = startTelegramMcpServer({
+    botToken: TELEGRAM_BOT_TOKEN,
+    allowedChatIds: telegramAllowedChatIds,
+    port: TELEGRAM_MCP_PORT,
+    pollIntervalMs: TELEGRAM_MCP_POLL_INTERVAL_MS,
+    logger: console,
+    sendMessageFn: async (chatId, text, options = {}) => {
+      const chunks = chunkMessage(text, TELEGRAM_MAX_MESSAGE_LENGTH);
+      const responses = [];
+      let isFirstChunk = true;
+      for (const chunk of chunks) {
+        if (!chunk) continue;
+        const payload = isFirstChunk ? options : {};
+        const result = await telegramSendMessage(chatId, chunk, payload);
+        responses.push(result);
+        isFirstChunk = false;
+      }
+      return { ok: true, segments: responses.length, results: responses };
+    }
+  });
 }
 
 const whatsappEndpoint = () => {
