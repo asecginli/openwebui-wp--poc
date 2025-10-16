@@ -28,6 +28,8 @@ const {
 } = process.env;
 
 const app = express();
+app.set("trust proxy", 1); // trust first hop (Nginx/Proxy Manager)
+
 app.use(express.json());
 
 const trimmedAgentBaseUrl = AGENT_API_BASE_URL?.replace(/\/+$/, "");
@@ -94,11 +96,18 @@ function requireApiKey(req, res, next) {
 }
 
 function wpHeaders() {
-  const token = Buffer.from(`${WP_USER}:${WP_APP_PASSWORD}`).toString("base64");
+  if (!WP_USER || !WP_APP_PASSWORD) {
+    const error = new Error("WordPress credentials are not configured");
+    error.status = 500;
+    throw error;
+  }
+  const sanitizedPassword = WP_APP_PASSWORD.replace(/\s+/g, "");
+  const token = Buffer.from(`${WP_USER}:${sanitizedPassword}`).toString("base64");
   return {
     "Authorization": `Basic ${token}`,
     "Content-Type": "application/json",
-    "X-Bridge-Auth": BRIDGE_API_KEY
+    // "X-Bridge-Auth": BRIDGE_API_KEY,
+    "x-api-keyY": BRIDGE_API_KEY
   };
 }
 
@@ -112,6 +121,7 @@ const wpPostsBaseUrl = () => {
 };
 
 async function wpCreatePost({ title, content, status = "publish" }) {
+  // WordPress REST API endpoint
   if (!title || !content) {
     const error = new Error("Missing title or content");
     error.status = 400;
@@ -416,6 +426,8 @@ app.post("/posts",
   body("title").isString().notEmpty(),
   body("content").isString().notEmpty(),
   async (req, res) => {
+    console.log("Request Headers:", req.headers);
+    console.log("Response Headers:", res.getHeaders());
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
       return res.status(400).json({ errors: errors.array() });
@@ -423,6 +435,8 @@ app.post("/posts",
     try {
       const { title, content, status = "publish" } = req.body;
       const data = await wpCreatePost({ title, content, status });
+      /// log here header 
+      console.log("Response Headers:", res.getHeaders());
       res.json(data);
     } catch (e) {
       res.status(e.status || 500).json({ error: "Bridge error", detail: e.message, extra: e.detail });
