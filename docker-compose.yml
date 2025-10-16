@@ -69,6 +69,7 @@ services:
       - frontend
     expose:
       - "3000"
+      - "3030"
 
   openwebui:
     image: ghcr.io/open-webui/open-webui:latest
