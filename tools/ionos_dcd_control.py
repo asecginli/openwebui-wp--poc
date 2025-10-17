@@ -17,7 +17,7 @@ class IonosConfig:
     """Configuration pulled from environment for accessing IONOS Cloud API."""
 
     def __init__(self) -> None:
-        base = os.getenv("IONOS_API_BASE_URL", "https://api.ionos.com/cloudapi/v6")
+        base = os.getenv("IONOS_CLOUD_API_BASE_URL", "https://api.ionos.com/cloudapi/v6")
         self.api_base = base.rstrip("/")
         token = os.getenv("IONOS_API_TOKEN", "").strip()
         username = os.getenv("IONOS_USERNAME", "").strip()

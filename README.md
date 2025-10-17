@@ -122,6 +122,29 @@ With `TELEGRAM_MCP_ENABLED=true`, OpenWebUI can load the bundled `Telegram MCP T
 
 Enable it from OpenWebUI Admin → Tools once the stack has restarted.
 
+##### Optional: Telegram AI Worker
+
+`bridge-api/telegram_ai_worker.py` automates replying to AI-triggered Telegram messages via the MCP server.
+
+1. Install Python deps (host or dedicated container):
+   ```bash
+   cd bridge-api
+   python3 -m venv .venv && source .venv/bin/activate
+   pip install -r requirements.txt
+   ```
+2. Ensure these environment variables are set (they can be sourced from `.env`):
+   - `TELEGRAM_MCP_ENABLED=true`, `TELEGRAM_BOT_TOKEN`, and proxy configuration so the MCP server is reachable.
+   - Choose an AI backend via `TELEGRAM_AI_PROVIDER` (`openai` default):
+     - `openai`: use the Responses/Agents API with `AGENT_API_KEY` plus either `AGENT_ID` or `AGENT_MODEL`.
+     - `openwebui`: set `OPENWEBUI_API_BASE_URL`, `OPENWEBUI_API_KEY`, and optionally `OPENWEBUI_MODEL`.
+     - `ionos`: set `AGENT_API_BASE_URL`, `AGENT_API_KEY`, and `AGENT_MODEL` (plus optional `AGENT_TEMPERATURE` / `AGENT_MAX_TOKENS`).
+   - Optional overrides: `TELEGRAM_MCP_WS_URL`, `TELEGRAM_STATE_FILE`, `TELEGRAM_POLL_INTERVAL`.
+3. Run the worker:
+   ```bash
+   python telegram_ai_worker.py
+   ```
+   It polls `resource://telegram.inbox`, detects prompts that start with `/ai`, `ask ai`, `gpt`, etc., forwards them to the agent, and responds via `telegram.send`. A local state file prevents reprocessing the same updates.
+
 #### WhatsApp Cloud API
 
 1. In the Meta Developer dashboard, enable the WhatsApp product, add a phone number, and generate a permanent access token.

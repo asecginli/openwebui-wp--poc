@@ -79,8 +79,8 @@ services:
       - API_BASE_URL=${API_BASE_URL}
       - BRIDGE_API_KEY=${BRIDGE_API_KEY}
       # If your Model Hub is OpenAI-compatible, set these (or configure via UI later)
-      - OPENAI_API_BASE_URL=${OPENWEBUI_API_BASE_URL}
-      - OPENAI_API_KEY=${OPENWEBUI_API_KEY}
+      - OPENAI_API_BASE_URL=${AGENT_API_BASE_URL}
+      - OPENAI_API_KEY=${AGENT_API_KEY}
       # Optional: Listen on 0.0.0.0 and chosen port
       - WEBUI_HOST=0.0.0.0
       - WEBUI_PORT=8081
