@@ -110,6 +110,18 @@ Both connectors expect the agent configuration above. Populate the relevant envi
    ```
 5. Send the bot a message. It forwards the text to the configured agent and replies with the agent's response.
 
+##### Optional: MCP Tool inside OpenWebUI
+
+With `TELEGRAM_MCP_ENABLED=true`, OpenWebUI can load the bundled `Telegram MCP Tool`:
+
+- The tool connects to the bridge via `ws://bridge-api:3030/` (override with `TELEGRAM_MCP_WS_URL`).
+- Exposed actions:
+  - `mcp_status` — verify MCP connectivity and list resources/tools.
+  - `mcp_inbox` — pull any buffered Telegram updates.
+  - `mcp_send` — send a message to a specific chat ID through the bot.
+
+Enable it from OpenWebUI Admin → Tools once the stack has restarted.
+
 #### WhatsApp Cloud API
 
 1. In the Meta Developer dashboard, enable the WhatsApp product, add a phone number, and generate a permanent access token.
