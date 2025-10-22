@@ -3,6 +3,10 @@ title: IONOS DCD Control
 author: OpenWebUI
 version: 0.1.0
 requirements: requests
+description: |
+  Tools for managing IONOS Cloud Data Center Designer (DCD) resources,
+  including datacenters and servers, via the IONOS Cloud API.
+tags: ionos, cloud, datacenter, server, dcd, api, tools, openwebui
 """
 
 import json
@@ -17,7 +21,9 @@ class IonosConfig:
     """Configuration pulled from environment for accessing IONOS Cloud API."""
 
     def __init__(self) -> None:
-        base = os.getenv("IONOS_CLOUD_API_BASE_URL", "https://api.ionos.com/cloudapi/v6")
+        base = os.getenv(
+            "IONOS_CLOUD_API_BASE_URL", "https://api.ionos.com/cloudapi/v6"
+        )
         self.api_base = base.rstrip("/")
         token = os.getenv("IONOS_API_TOKEN", "").strip()
         username = os.getenv("IONOS_USERNAME", "").strip()
@@ -43,19 +49,32 @@ class IonosConfig:
         return headers
 
 
-class IonosDCDTools:
+class Tools:  # must be named Tools for OpenWebUI to load it
     """Helper utilities for interacting with the IONOS Cloud Data Center Designer."""
 
     def __init__(self, config: Optional[IonosConfig] = None) -> None:
-        self.config = config or IonosConfig()
-        self.session = requests.Session()
-        self.session.headers.update(self.config.headers())
-        if self.config.auth is not None:
-            self.session.auth = self.config.auth
+        self._init_error: Optional[str] = None
+        self.config: Optional[IonosConfig]
+        self.session: Optional[requests.Session]
 
-    # ------------------------------------------------------------------
-    # low level helpers
-    # ------------------------------------------------------------------
+        try:
+            self.config = config or IonosConfig()
+            self.session = requests.Session()
+            self.session.headers.update(self.config.headers())
+            if self.config.auth is not None:
+                self.session.auth = self.config.auth
+        except Exception as exc:
+            self.config = None
+            self.session = None
+            self._init_error = "Unable to initialize IONOS client: {exc}".format(exc=exc)
+
+    def _ready(self) -> Optional[str]:
+        if self._init_error:
+            return self._init_error
+        if self.config is None or self.session is None:
+            return "IONOS client is not initialized."
+        return None
+
     def _request(
         self,
         method: str,
@@ -65,9 +84,21 @@ class IonosDCDTools:
         params: Optional[Dict[str, Any]] = None,
         json_body: Optional[Dict[str, Any]] = None,
     ) -> Tuple[bool, Any]:
-        url = f"{self.config.api_base}/{path.lstrip('/')}"
+        readiness = self._ready()
+        if readiness:
+            return False, {"error": "configuration", "detail": readiness}
+
+        config = self.config
+        session = self.session
+        if config is None or session is None:
+            return False, {
+                "error": "configuration",
+                "detail": "IONOS client is not initialized.",
+            }
+
+        url = f"{config.api_base}/{path.lstrip('/')}"
         try:
-            response = self.session.request(
+            response = session.request(
                 method=method,
                 url=url,
                 params=params,
@@ -75,10 +106,16 @@ class IonosDCDTools:
                 timeout=45,
             )
         except requests.exceptions.Timeout:
-            return False, {"error": "timeout", "detail": "Request to IONOS API timed out."}
+            return False, {
+                "error": "timeout",
+                "detail": "Request to IONOS API timed out.",
+            }
         except requests.exceptions.ConnectionError:
-            return False, {"error": "connection_error", "detail": "Unable to reach IONOS API endpoint."}
-        except Exception as exc:  # pragma: no cover - unexpected runtime issue
+            return False, {
+                "error": "connection_error",
+                "detail": "Unable to reach IONOS API endpoint.",
+            }
+        except Exception as exc:
             return False, {"error": "unexpected_error", "detail": str(exc)}
 
         if response.status_code not in expected:
@@ -96,9 +133,7 @@ class IonosDCDTools:
             return response.json()
         except ValueError:
             text = (getattr(response, "text", "") or "").strip()
-            if len(text) > 600:
-                return text[:600] + "..."
-            return text
+            return text[:600] + ("..." if len(text) > 600 else "")
 
     @staticmethod
     def _stringify(value: Any, limit: int = 600) -> str:
@@ -250,15 +285,4 @@ class IonosDCDTools:
             return self._format_error(f"checking request {request_id}", data)
         return "Request status:\n" + self._stringify(data)
 
-    @staticmethod
-    def extract_request_id(response_data: Any) -> Optional[str]:
-        if isinstance(response_data, dict):
-            headers = response_data.get("headers", {})
-            location = headers.get("location") or headers.get("Location")
-            if location and "/requests/" in location:
-                return location.split("/requests/", 1)[1].split("/", 1)[0]
-        return None
 
-
-def load_tools() -> Iterable[IonosDCDTools]:
-    return [IonosDCDTools()]
