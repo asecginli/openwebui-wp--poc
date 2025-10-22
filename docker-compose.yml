@@ -92,8 +92,6 @@ services:
     image: ghcr.io/open-webui/open-webui:latest
     container_name: openwebui
     restart: unless-stopped
-    env_file:
-      - .env
     environment:
       - API_BASE_URL=${API_BASE_URL}
       - BRIDGE_API_KEY=${BRIDGE_API_KEY}
