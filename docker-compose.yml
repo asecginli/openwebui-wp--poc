@@ -92,6 +92,8 @@ services:
     image: ghcr.io/open-webui/open-webui:latest
     container_name: openwebui
     restart: unless-stopped
+    env_file:
+      - .env
     environment:
       - API_BASE_URL=${API_BASE_URL}
       - BRIDGE_API_KEY=${BRIDGE_API_KEY}
@@ -101,6 +103,11 @@ services:
       # Optional: Listen on 0.0.0.0 and chosen port
       - WEBUI_HOST=0.0.0.0
       - WEBUI_PORT=8081
+      # IONOS Cloud credentials for VM management (optional)
+      - IONOS_CLOUD_API_BASE_URL=${IONOS_CLOUD_API_BASE_URL}
+      - IONOS_API_TOKEN=${IONOS_API_TOKEN}
+      - IONOS_USERNAME=${IONOS_USERNAME}
+      - IONOS_PASSWORD=${IONOS_PASSWORD}
     volumes:
       - openwebui_data:/app/backend/data
     networks:
