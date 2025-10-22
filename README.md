@@ -116,34 +116,39 @@ With `TELEGRAM_MCP_ENABLED=true`, OpenWebUI can load the bundled `Telegram MCP T
 
 - The tool connects to the bridge via `ws://bridge-api:3030/` (override with `TELEGRAM_MCP_WS_URL`).
 - Exposed actions:
-  - `mcp_status` — verify MCP connectivity and list resources/tools.
-  - `mcp_inbox` — pull any buffered Telegram updates.
-  - `mcp_send` — send a message to a specific chat ID through the bot.
+  - `mcp_status` - verify MCP connectivity and list resources/tools.
+  - `mcp_inbox` - pull any buffered Telegram updates.
+  - `mcp_send` - send a message to a specific chat ID through the bot.
 
-Enable it from OpenWebUI Admin → Tools once the stack has restarted.
+Enable it from OpenWebUI Admin -> Tools once the stack has restarted.
 
 ##### Optional: Telegram AI Worker
 
-`bridge-api/telegram_ai_worker.py` automates replying to AI-triggered Telegram messages via the MCP server.
+`bridge-api/telegram_ai_worker.js` automates replying to AI-triggered Telegram messages via the MCP server.
 
-1. Install Python deps (host or dedicated container):
+**Run inside Docker (recommended)**
+
+1. Ensure `.env` includes:
+   - `TELEGRAM_MCP_ENABLED=true`, `TELEGRAM_BOT_TOKEN`, and any MCP proxy overrides.
+   - Choose an AI backend with `AI_PROVIDER` (`ionos` default):
+    - `ionos`: uses `AGENT_API_BASE_URL`, `AGENT_API_KEY`, `AGENT_MODEL`, and optional `AGENT_TEMPERATURE`, `AGENT_MAX_TOKENS`, `AGENT_HISTORY_LIMIT`.
+    - `openwebui`: set `OPENWEBUI_API_BASE_URL`, `OPENWEBUI_API_KEY`, optional `OPENWEBUI_MODEL`, `OPENWEBUI_HISTORY_LIMIT`.
+    - `openai`: set `OPENAI_API_BASE_URL`, `OPENAI_API_KEY`, and either `OPENAI_AGENT_ID` or `OPENAI_MODEL`.
+2. Start the dedicated service:
    ```bash
-   cd bridge-api
-   python3 -m venv .venv && source .venv/bin/activate
-   pip install -r requirements.txt
+   docker compose up -d telegram-worker
    ```
-2. Ensure these environment variables are set (they can be sourced from `.env`):
-   - `TELEGRAM_MCP_ENABLED=true`, `TELEGRAM_BOT_TOKEN`, and proxy configuration so the MCP server is reachable.
-   - Choose an AI backend via `TELEGRAM_AI_PROVIDER` (`openai` default):
-     - `openai`: use the Responses/Agents API with `AGENT_API_KEY` plus either `AGENT_ID` or `AGENT_MODEL`.
-     - `openwebui`: set `OPENWEBUI_API_BASE_URL`, `OPENWEBUI_API_KEY`, and optionally `OPENWEBUI_MODEL`.
-     - `ionos`: set `AGENT_API_BASE_URL`, `AGENT_API_KEY`, and `AGENT_MODEL` (plus optional `AGENT_TEMPERATURE` / `AGENT_MAX_TOKENS`).
-   - Optional overrides: `TELEGRAM_MCP_WS_URL`, `TELEGRAM_STATE_FILE`, `TELEGRAM_POLL_INTERVAL`.
-3. Run the worker:
-   ```bash
-   python telegram_ai_worker.py
-   ```
-   It polls `resource://telegram.inbox`, detects prompts that start with `/ai`, `ask ai`, `gpt`, etc., forwards them to the agent, and responds via `telegram.send`. A local state file prevents reprocessing the same updates.
+   Logs: `docker compose logs -f telegram-worker`
+
+**Run locally (alternative)**
+
+```bash
+cd bridge-api
+npm install
+npm run telegram-worker
+```
+
+In both cases the worker polls `resource://telegram.inbox`, detects prompts that begin with `/ai`, `ask ai`, `gpt`, etc., forwards them to the selected AI backend, and responds via `telegram.send`. The last processed update ID is stored in `TELEGRAM_STATE_FILE` to avoid duplicates.
 
 #### WhatsApp Cloud API
 
@@ -181,8 +186,8 @@ Enable it from OpenWebUI Admin → Tools once the stack has restarted.
 ## Architecture
 
 ```
-Client → Nginx Proxy Manager → OpenWebUI → Bridge API → WordPress → MariaDB
-                            ↳ Direct WordPress access (admin)
+Client -> Nginx Proxy Manager -> OpenWebUI -> Bridge API -> WordPress -> MariaDB
+                            -> Direct WordPress access (admin)
 ```
 
 ## Security Notes
@@ -198,5 +203,4 @@ Client → Nginx Proxy Manager → OpenWebUI → Bridge API → WordPress → Ma
 - Verify SSL certificates in Nginx Proxy Manager
 - Ensure all environment variables are set correctly
 - Check WordPress application password is valid
-
 

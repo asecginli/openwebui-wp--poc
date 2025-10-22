@@ -70,6 +70,23 @@ services:
     expose:
       - "3000"
       - "3030"
+  telegram-worker:
+    profiles:
+      - telegram
+    build: ./bridge-api
+    container_name: telegram-worker
+    restart: unless-stopped
+    command: ["node","telegram_ai_worker.js"]
+    env_file:
+      - .env
+    environment:
+      - TELEGRAM_MCP_WS_URL=ws://bridge-api:3030/
+    depends_on:
+      - bridge-api
+    volumes:
+      - telegram_worker_state:/app/data
+    networks:
+      - frontend
 
   openwebui:
     image: ghcr.io/open-webui/open-webui:latest
@@ -97,6 +114,7 @@ volumes:
   mariadb_data:
   wp_data:
   openwebui_data:
+  telegram_worker_state:
 
 networks:
   frontend:

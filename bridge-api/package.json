@@ -9,6 +9,7 @@
     "ws": "^8.18.0"
   },
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "telegram-worker": "node telegram_ai_worker.js"
   }
 }
