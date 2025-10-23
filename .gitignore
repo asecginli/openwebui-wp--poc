@@ -6,7 +6,7 @@
 node_modules/
 .qodo/
 dist/
-/tools/
+# /tools/
 browser-logs/
 coverage/
 npm-debug.log*
