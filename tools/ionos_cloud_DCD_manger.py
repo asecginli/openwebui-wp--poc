@@ -25,7 +25,7 @@ class IonosConfig:
             "IONOS_CLOUD_API_BASE_URL", "https://api.ionos.com/cloudapi/v6"
         )
         self.api_base = base.rstrip("/")
-        token = os.getenv("IONOS_API_TOKEN").strip()
+        token = os.getenv("IONOS_API_TOKEN","").strip()
         username = os.getenv("IONOS_USERNAME", "").strip()
         password = os.getenv("IONOS_PASSWORD", "").strip()
 
@@ -388,26 +388,12 @@ class Tools:  # <-- ✅ must be named Tools for OpenWebUI to load it
         )
         if not ok:
             return self._format_error("creating LAN", data)
+        
         return f"🌐 LAN creation requested: **{name}** (public={public})\n{self._stringify(data)}"
 
-
-    def create_internet_access(self, datacenter_id: str, nic_id: str, ip: str) -> str:
-        """
-        Attach Internet access (public IP) to a NIC.
-        Typically used to give a server Internet connectivity.
-        """
-        payload = {"properties": {"ips": [ip], "nicId": nic_id}}
-        ok, data = self._request(
-            "post",
-            f"datacenters/{datacenter_id}/internet-accesses",
-            expected=(202,),
-            json_body=payload,
-        )
-        if not ok:
-            return self._format_error("creating Internet access", data)
-        return f"🌍 Internet access requested for NIC {nic_id} with IP {ip}"
-
-
+    # ------------------------------------------------------------------
+    # CREATE A STORAGE VOLUME
+    # ------------------------------------------------------------------
     def create_volume(
         self,
         datacenter_id: str,
@@ -436,49 +422,9 @@ class Tools:  # <-- ✅ must be named Tools for OpenWebUI to load it
         return f"💽 Volume creation requested: **{name}** ({size_gb} GB, {volume_type})"
 
 
-    def attach_volume_to_server(
-        self, datacenter_id: str, server_id: str, volume_id: str
-    ) -> str:
-        """Attach an existing volume to a server."""
-        payload = {"id": volume_id}
-        ok, data = self._request(
-            "post",
-            f"datacenters/{datacenter_id}/servers/{server_id}/volumes",
-            expected=(202,),
-            json_body=payload,
-        )
-        if not ok:
-            return self._format_error("attaching volume", data)
-        return f"💾 Volume {volume_id} attached to server {server_id}."
-
-
-    def create_nic(
-        self,
-        datacenter_id: str,
-        server_id: str,
-        lan_id: int,
-        name: str = "nic0",
-        dhcp: bool = True,
-        ips: Optional[list[str]] = None,
-    ) -> str:
-        """Add a NIC to a server, optionally assigning static IP(s)."""
-        payload = {
-            "properties": {"name": name, "lan": lan_id, "dhcp": dhcp},
-        }
-        if ips:
-            payload["properties"]["ips"] = ips
-
-        ok, data = self._request(
-            "post",
-            f"datacenters/{datacenter_id}/servers/{server_id}/nics",
-            expected=(202,),
-            json_body=payload,
-        )
-        if not ok:
-            return self._format_error("creating NIC", data)
-        return f"🧩 NIC created on server {server_id} (LAN {lan_id}, DHCP={dhcp})"
-
-
+    # ------------------------------------------------------------------
+    # CREATE A PUBLIC IP BLOCK
+    # ------------------------------------------------------------------
     def create_ipblock(self, name: str, location: str, size: int = 1) -> str:
         """Reserve a public IP block."""
         payload = {"properties": {"name": name, "location": location, "size": size}}
@@ -512,23 +458,8 @@ class Tools:  # <-- ✅ must be named Tools for OpenWebUI to load it
 
 
     # ------------------------------------------------------------------
-    # ATTACHMENTS AND NETWORKING UTILITIES
+    # CREATE A NIC FOR A SERVER
     # ------------------------------------------------------------------
-
-    def attach_volume_to_server(self, datacenter_id: str, server_id: str, volume_id: str) -> str:
-        """Attach an existing volume to a server."""
-        payload = {"id": volume_id}
-        ok, data = self._request(
-            "post",
-            f"datacenters/{datacenter_id}/servers/{server_id}/volumes",
-            expected=(202,),
-            json_body=payload,
-        )
-        if not ok:
-            return self._format_error("attaching volume", data)
-        return f"💾 Volume `{volume_id}` attached to server `{server_id}`."
-
-
     def create_nic(
         self,
         datacenter_id: str,
@@ -554,6 +485,9 @@ class Tools:  # <-- ✅ must be named Tools for OpenWebUI to load it
         return f"🧩 NIC `{name}` created on server `{server_id}` (LAN {lan_id}, DHCP={dhcp})."
 
 
+    # ------------------------------------------------------------------
+    # CREATE A INTERNET ACCESS FOR A LAN
+    # ------------------------------------------------------------------
     def create_internet_access(self, datacenter_id: str, lan_id: int) -> str:
         """
         Enable Internet access on a LAN — this provides outbound connectivity.
@@ -573,7 +507,6 @@ class Tools:  # <-- ✅ must be named Tools for OpenWebUI to load it
     # ------------------------------------------------------------------
     # FIREWALL RULES
     # ------------------------------------------------------------------
-
     def set_firewall_rules(
         self,
         datacenter_id: str,
