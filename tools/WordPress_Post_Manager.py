@@ -3,6 +3,11 @@ title: WordPress Post Manager
 author: OpenWebUI
 version: 1.3.1
 requirements: requests
+description: |
+  Create a new WordPress blog post via the Bridge API. Retrieve details of a WordPress blog post by ID. 
+  Update an existing WordPress blog post (partial update). 
+  Search for WordPress blog posts using filters such as keywords, status, author, and sort order.
+tags: wordpress, bridge, api, tools, openwebui
 """
 
 import os
@@ -35,13 +40,6 @@ class Tools:
             )
 
         self.timeout = 30  # Restrict timeout to prevent hanging requests
-
-        # self.api_url = os.getenv("API_BASE_URL", "https://api.agnsai.ddns.net/posts")
-        # self.api_key = os.getenv(
-        #     "BRIDGE_API_KEY",
-        #     "a17e7b0221386d91e5dc7a4a40ac9801384c0cd3e67f11234f067b8b71cab613",
-        # )
-        # self.timeout = 30
 
     # ---------- internal helpers ----------
     def _headers(self) -> Dict[str, str]:
